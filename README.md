@@ -15,6 +15,15 @@ The same binary works with every EduKod school. The school URL and a revocable
 device credential are supplied during pairing; no school hostname, fleet
 credential, or model selection is compiled into a release.
 
+## Public repository scope
+
+This repository contains only the Linux Companion client, its tests,
+documentation, and release packaging. It does not contain any EduKod server,
+administration/control-plane, deployment, tenant configuration, or credential
+source. The enrollment and WSS route names documented here are the public
+client protocol required for interoperability; their server implementation is
+not distributed with the Companion.
+
 ## Requirements
 
 - Linux on amd64 or arm64.
