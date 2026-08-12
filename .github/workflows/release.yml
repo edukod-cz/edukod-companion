@@ -1,0 +1,85 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+  id-token: write
+  attestations: write
+
+jobs:
+  release:
+    name: Build, sign, and publish
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Check out tagged source
+        uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5
+
+      - name: Set up Go
+        uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
+        with:
+          go-version: "1.23.x"
+          cache-dependency-path: go.mod
+
+      - name: Install minisign
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends minisign
+
+      - name: Build and sign release packages
+        env:
+          MINISIGN_KEY: ${{ secrets.COMPANION_MINISIGN_SECRET_KEY }}
+          MINISIGN_PUBLIC_KEY: ${{ vars.COMPANION_MINISIGN_PUBLIC_KEY }}
+        run: |
+          set -euo pipefail
+          version="${GITHUB_REF_NAME#v}"
+          if [[ -z "${version}" || "${version}" == "${GITHUB_REF_NAME}" ]]; then
+            echo "Tag must have the form v<version>" >&2
+            exit 1
+          fi
+          if [[ -z "${MINISIGN_KEY}" ]]; then
+            echo "COMPANION_MINISIGN_SECRET_KEY is required" >&2
+            exit 1
+          fi
+          if [[ ! "${MINISIGN_PUBLIC_KEY}" =~ ^RW[A-Za-z0-9+/=]{40,120}$ ]]; then
+            echo "COMPANION_MINISIGN_PUBLIC_KEY is invalid" >&2
+            exit 1
+          fi
+          key_file="${RUNNER_TEMP}/companion-minisign.key"
+          printf '%s' "${MINISIGN_KEY}" >"${key_file}"
+          chmod 600 "${key_file}"
+          make sign VERSION="${version}" MINISIGN_SECRET_KEY="${key_file}"
+          printf '%s\n' \
+            'untrusted comment: EduKod Local Companion release verification key' \
+            "${MINISIGN_PUBLIC_KEY}" \
+            > dist/COMPANION_MINISIGN.pub
+          minisign -Vm dist/SHA256SUMS \
+            -x dist/SHA256SUMS.minisig \
+            -P "${MINISIGN_PUBLIC_KEY}"
+
+      - name: Attest release artifacts
+        uses: actions/attest-build-provenance@43d14bc2b83dec42d39ecae14e916627a18bb661 # v3
+        with:
+          subject-path: |
+            dist/*.tar.gz
+            dist/*.deb
+            dist/SHA256SUMS
+            dist/SHA256SUMS.minisig
+
+      - name: Publish GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          gh release create "${GITHUB_REF_NAME}" \
+            dist/*.tar.gz \
+            dist/*.deb \
+            dist/SHA256SUMS \
+            dist/SHA256SUMS.minisig \
+            dist/COMPANION_MINISIGN.pub \
+            --verify-tag \
+            --generate-notes \
+            --title "EduKod Local Companion ${GITHUB_REF_NAME#v}"
